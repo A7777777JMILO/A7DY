@@ -607,11 +607,127 @@ const SettingsPage = () => {
   );
 };
 
+// Enhanced User Management Modal Components
+const UserModal = ({ user, isOpen, onClose, onSave, title }) => {
+  const [formData, setFormData] = useState({
+    username: user?.username || '',
+    password: user ? '' : '',
+    is_active: user?.is_active !== undefined ? user.is_active : true,
+    expiry_date: user?.expiry_date ? new Date(user.expiry_date).toISOString().split('T')[0] : '',
+    no_expiry: !user?.expiry_date
+  });
+
+  useEffect(() => {
+    if (user) {
+      setFormData({
+        username: user.username,
+        password: '',
+        is_active: user.is_active !== undefined ? user.is_active : true,
+        expiry_date: user.expiry_date ? new Date(user.expiry_date).toISOString().split('T')[0] : '',
+        no_expiry: !user.expiry_date
+      });
+    }
+  }, [user]);
+
+  const handleSave = () => {
+    const userData = {
+      username: formData.username,
+      ...(formData.password && { password: formData.password }),
+      is_active: formData.is_active,
+      expiry_date: formData.no_expiry ? null : (formData.expiry_date ? new Date(formData.expiry_date).toISOString() : null)
+    };
+    onSave(userData);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content">
+        <div className="modal-header">
+          <h3>{title}</h3>
+          <button onClick={onClose} className="modal-close">×</button>
+        </div>
+        <div className="modal-body">
+          <div className="form-group">
+            <label className="form-label">اسم المستخدم</label>
+            <input
+              type="text"
+              value={formData.username}
+              onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+              className="form-input"
+              placeholder="أدخل اسم المستخدم"
+              disabled={!!user}
+            />
+          </div>
+
+          {!user && (
+            <div className="form-group">
+              <label className="form-label">كلمة المرور</label>
+              <input
+                type="password"
+                value={formData.password}
+                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                className="form-input"
+                placeholder="أدخل كلمة مرور قوية"
+              />
+            </div>
+          )}
+
+          <div className="form-group">
+            <label className="checkbox-container">
+              <input
+                type="checkbox"
+                checked={formData.is_active}
+                onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+              />
+              <span className="checkmark"></span>
+              <span className="checkbox-label">حساب نشط</span>
+            </label>
+          </div>
+
+          <div className="form-group">
+            <label className="checkbox-container">
+              <input
+                type="checkbox"
+                checked={formData.no_expiry}
+                onChange={(e) => setFormData({ ...formData, no_expiry: e.target.checked, expiry_date: '' })}
+              />
+              <span className="checkmark"></span>
+              <span className="checkbox-label">بدون تاريخ انتهاء</span>
+            </label>
+          </div>
+
+          {!formData.no_expiry && (
+            <div className="form-group">
+              <label className="form-label">تاريخ انتهاء الصالحية</label>
+              <input
+                type="date"
+                value={formData.expiry_date}
+                onChange={(e) => setFormData({ ...formData, expiry_date: e.target.value })}
+                className="form-input"
+              />
+            </div>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button onClick={handleSave} className="action-button success">
+            <span className="button-icon">💾</span>
+            حفظ
+          </button>
+          <button onClick={onClose} className="action-button secondary">
+            إلغاء
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const UsersPage = () => {
   const [users, setUsers] = useState([]);
-  const [showAddUser, setShowAddUser] = useState(false);
-  const [newUser, setNewUser] = useState({ username: '', password: '' });
   const [loading, setLoading] = useState(false);
+  const [modalData, setModalData] = useState({ isOpen: false, user: null, title: '' });
 
   useEffect(() => {
     fetchUsers();
@@ -626,24 +742,40 @@ const UsersPage = () => {
     }
   };
 
-  const handleAddUser = async () => {
-    if (!newUser.username || !newUser.password) {
-      alert('يرجى إدخال جميع البيانات');
-      return;
-    }
+  const handleAddUser = () => {
+    setModalData({ isOpen: true, user: null, title: 'إضافة مستخدم جديد' });
+  };
 
+  const handleEditUser = (user) => {
+    setModalData({ isOpen: true, user, title: 'تعديل بيانات المستخدم' });
+  };
+
+  const handleSaveUser = async (userData) => {
     setLoading(true);
     try {
-      await apiCall('/users', {
-        method: 'POST',
-        body: JSON.stringify(newUser)
-      });
-      setNewUser({ username: '', password: '' });
-      setShowAddUser(false);
+      if (modalData.user) {
+        // Update user
+        await apiCall(`/users/${modalData.user.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            is_active: userData.is_active,
+            expiry_date: userData.expiry_date
+          })
+        });
+        alert('تم تحديث بيانات المستخدم بنجاح');
+      } else {
+        // Create user
+        await apiCall('/users', {
+          method: 'POST',
+          body: JSON.stringify(userData)
+        });
+        alert('تم إضافة المستخدم بنجاح');
+      }
+      
+      setModalData({ isOpen: false, user: null, title: '' });
       fetchUsers();
-      alert('تم إضافة المستخدم بنجاح');
     } catch (error) {
-      alert('فشل في إضافة المستخدم: ' + error.message);
+      alert('فشل في حفظ بيانات المستخدم: ' + error.message);
     }
     setLoading(false);
   };
@@ -660,10 +792,26 @@ const UsersPage = () => {
     }
   };
 
+  const getStatusInfo = (user) => {
+    if (!user.is_active) {
+      return { status: 'معطل', color: 'red', icon: '🔴' };
+    }
+    
+    if (user.expiry_date && new Date(user.expiry_date) < new Date()) {
+      return { status: 'منتهي الصالحية', color: 'orange', icon: '⏰' };
+    }
+    
+    if (user.expiry_date && new Date(user.expiry_date) < new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)) {
+      return { status: 'قريب الانتهاء', color: 'yellow', icon: '⚠️' };
+    }
+    
+    return { status: 'نشط', color: 'green', icon: '✅' };
+  };
+
   const headerActions = (
     <div className="header-action-group">
       <button
-        onClick={() => setShowAddUser(true)}
+        onClick={handleAddUser}
         className="action-button primary"
       >
         <span className="button-icon">👤+</span>
@@ -672,65 +820,20 @@ const UsersPage = () => {
     </div>
   );
 
+  const activeUsers = users.filter(u => u.is_active && (!u.expiry_date || new Date(u.expiry_date) > new Date()));
+  const expiredUsers = users.filter(u => u.expiry_date && new Date(u.expiry_date) <= new Date());
+  const inactiveUsers = users.filter(u => !u.is_active);
+
   return (
     <div className="page-content">
       <Header title="إدارة المستخدمين" actions={headerActions} />
 
       <div className="stats-grid">
         <StatsCard icon="👥" title="إجمالي المستخدمين" value={users.length} color="purple" />
-        <StatsCard icon="🆕" title="مستخدمين جدد هذا الشهر" value="2" color="green" />
-        <StatsCard icon="🔒" title="حسابات آمنة" value={users.length} color="blue" />
+        <StatsCard icon="✅" title="مستخدمين نشطين" value={activeUsers.length} color="green" />
+        <StatsCard icon="⏰" title="منتهية الصالحية" value={expiredUsers.length} color="orange" />
+        <StatsCard icon="🔴" title="حسابات معطلة" value={inactiveUsers.length} color="red" />
       </div>
-
-      {showAddUser && (
-        <div className="add-user-card">
-          <div className="card-header">
-            <span className="card-icon">👤+</span>
-            <h3>إضافة مستخدم جديد</h3>
-          </div>
-          <div className="card-content">
-            <div className="form-grid">
-              <div className="form-group">
-                <label className="form-label">اسم المستخدم</label>
-                <input
-                  type="text"
-                  value={newUser.username}
-                  onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
-                  className="form-input"
-                  placeholder="أدخل اسم المستخدم"
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">كلمة المرور</label>
-                <input
-                  type="password"
-                  value={newUser.password}
-                  onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                  className="form-input"
-                  placeholder="أدخل كلمة مرور قوية"
-                />
-              </div>
-            </div>
-            <div className="form-actions">
-              <button
-                onClick={handleAddUser}
-                disabled={loading}
-                className="action-button success"
-              >
-                <span className="button-icon">✅</span>
-                {loading ? 'جارٍ الإضافة...' : 'إضافة المستخدم'}
-              </button>
-              <button
-                onClick={() => setShowAddUser(false)}
-                className="action-button secondary"
-              >
-                <span className="button-icon">❌</span>
-                إلغاء
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div className="users-table-container">
         <div className="flash-table">
@@ -739,39 +842,69 @@ const UsersPage = () => {
               <tr>
                 <th>المستخدم</th>
                 <th>تاريخ الإنشاء</th>
+                <th>تاريخ انتهاء الصالحية</th>
                 <th>الحالة</th>
                 <th>إجراءات</th>
               </tr>
             </thead>
             <tbody>
-              {users.map((user) => (
-                <tr key={user.id}>
-                  <td className="user-info">
-                    <div className="user-avatar-mini">
-                      {user.username.charAt(0).toUpperCase()}
-                    </div>
-                    <span className="username">{user.username}</span>
-                  </td>
-                  <td className="created-date">
-                    {new Date(user.created_at).toLocaleDateString('ar-SA')}
-                  </td>
-                  <td>
-                    <span className="status-badge status-active">نشط</span>
-                  </td>
-                  <td>
-                    <button
-                      onClick={() => handleDeleteUser(user.id)}
-                      className="delete-button"
-                    >
-                      🗑️ حذف
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {users.map((user) => {
+                const statusInfo = getStatusInfo(user);
+                return (
+                  <tr key={user.id}>
+                    <td className="user-info">
+                      <div className="user-avatar-mini">
+                        {user.username.charAt(0).toUpperCase()}
+                      </div>
+                      <span className="username">{user.username}</span>
+                    </td>
+                    <td className="created-date">
+                      {new Date(user.created_at).toLocaleDateString('ar-SA')}
+                    </td>
+                    <td className="expiry-date">
+                      {user.expiry_date 
+                        ? new Date(user.expiry_date).toLocaleDateString('ar-SA')
+                        : 'بدون انتهاء'
+                      }
+                    </td>
+                    <td>
+                      <span className={`status-badge status-${statusInfo.color}`}>
+                        {statusInfo.icon} {statusInfo.status}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="action-buttons">
+                        <button
+                          onClick={() => handleEditUser(user)}
+                          className="edit-button"
+                          title="تعديل"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          onClick={() => handleDeleteUser(user.id)}
+                          className="delete-button"
+                          title="حذف"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </div>
+
+      <UserModal
+        user={modalData.user}
+        isOpen={modalData.isOpen}
+        onClose={() => setModalData({ isOpen: false, user: null, title: '' })}
+        onSave={handleSaveUser}
+        title={modalData.title}
+      />
     </div>
   );
 };

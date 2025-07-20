@@ -37,23 +37,32 @@ app = FastAPI(title="A7delivery Orders API", version="1.0.0")
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
-# Models
+# Enhanced Models
 class User(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     username: str
     password: str
     role: str = "user"  # "admin" or "user"
+    is_active: bool = True
+    expiry_date: Optional[datetime] = None  # None means no expiry
     created_at: datetime = Field(default_factory=datetime.utcnow)
     created_by: Optional[str] = None
 
 class UserCreate(BaseModel):
     username: str
     password: str
+    expiry_date: Optional[datetime] = None
+
+class UserUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    expiry_date: Optional[datetime] = None
 
 class UserResponse(BaseModel):
     id: str
     username: str
     role: str
+    is_active: bool
+    expiry_date: Optional[datetime] = None
     created_at: datetime
 
 class LoginRequest(BaseModel):
@@ -64,6 +73,10 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     user: UserResponse
+
+class AdminPasswordChange(BaseModel):
+    current_password: str
+    new_password: str
 
 class UserSettings(BaseModel):
     user_id: str
@@ -155,6 +168,25 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     user = await db.users.find_one({"username": username})
     if user is None:
         raise credentials_exception
+    
+    # Check if user is active
+    if not user.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is deactivated"
+        )
+    
+    # Check if user has expired
+    if user.get("expiry_date"):
+        expiry_date = user["expiry_date"]
+        if isinstance(expiry_date, str):
+            expiry_date = datetime.fromisoformat(expiry_date.replace('Z', '+00:00'))
+        if datetime.utcnow() > expiry_date:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account has expired"
+            )
+    
     return User(**user)
 
 async def get_current_admin_user(current_user: User = Depends(get_current_user)):
@@ -165,17 +197,24 @@ async def get_current_admin_user(current_user: User = Depends(get_current_user))
         )
     return current_user
 
-# Initialize admin user
+# Initialize admin user with new password
 async def init_admin():
     admin_exists = await db.users.find_one({"username": "A7JMILO"})
     if not admin_exists:
         admin_user = User(
             username="A7JMILO",
-            password=get_password_hash("A7JMILO20006"),
+            password=get_password_hash("436b0bc9005add01239a43435d502d197a647de839285829215bdd04a21de/RAOUF@20006"),
             role="admin"
         )
         await db.users.insert_one(admin_user.dict())
-        logging.info("Admin user created successfully")
+        logging.info("Admin user created successfully with new password")
+    else:
+        # Update admin password if it exists
+        await db.users.update_one(
+            {"username": "A7JMILO"},
+            {"$set": {"password": get_password_hash("436b0bc9005add01239a43435d502d197a647de839285829215bdd04a21de/RAOUF@20006")}}
+        )
+        logging.info("Admin password updated successfully")
 
 # Authentication Routes
 @api_router.post("/auth/login", response_model=Token)
@@ -187,6 +226,24 @@ async def login(user_credentials: LoginRequest):
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    
+    # Check if user is active
+    if not user.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is deactivated"
+        )
+    
+    # Check if user has expired (skip for admin)
+    if user.get("role") != "admin" and user.get("expiry_date"):
+        expiry_date = user["expiry_date"]
+        if isinstance(expiry_date, str):
+            expiry_date = datetime.fromisoformat(expiry_date.replace('Z', '+00:00'))
+        if datetime.utcnow() > expiry_date:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account has expired"
+            )
     
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
@@ -200,7 +257,7 @@ async def login(user_credentials: LoginRequest):
         "user": user_response
     }
 
-# User Management Routes (Admin only)
+# Enhanced User Management Routes
 @api_router.post("/users", response_model=UserResponse)
 async def create_user(user_data: UserCreate, current_admin: User = Depends(get_current_admin_user)):
     # Check if user already exists
@@ -214,6 +271,7 @@ async def create_user(user_data: UserCreate, current_admin: User = Depends(get_c
     new_user = User(
         username=user_data.username,
         password=get_password_hash(user_data.password),
+        expiry_date=user_data.expiry_date,
         created_by=current_admin.id
     )
     
@@ -225,9 +283,27 @@ async def get_users(current_admin: User = Depends(get_current_admin_user)):
     users = await db.users.find({"role": "user"}).to_list(1000)
     return [UserResponse(**user) for user in users]
 
+@api_router.put("/users/{user_id}", response_model=UserResponse)
+async def update_user(user_id: str, user_update: UserUpdate, current_admin: User = Depends(get_current_admin_user)):
+    update_data = user_update.dict(exclude_unset=True)
+    
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No data provided for update")
+    
+    result = await db.users.update_one(
+        {"id": user_id, "role": "user"}, 
+        {"$set": update_data}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    updated_user = await db.users.find_one({"id": user_id})
+    return UserResponse(**updated_user)
+
 @api_router.delete("/users/{user_id}")
 async def delete_user(user_id: str, current_admin: User = Depends(get_current_admin_user)):
-    result = await db.users.delete_one({"id": user_id})
+    result = await db.users.delete_one({"id": user_id, "role": "user"})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
     
@@ -235,7 +311,26 @@ async def delete_user(user_id: str, current_admin: User = Depends(get_current_ad
     await db.user_settings.delete_one({"user_id": user_id})
     return {"message": "User deleted successfully"}
 
-# Settings Routes
+@api_router.post("/admin/change-password")
+async def change_admin_password(password_data: AdminPasswordChange, current_admin: User = Depends(get_current_admin_user)):
+    # Verify current password
+    admin_user = await db.users.find_one({"id": current_admin.id})
+    if not verify_password(password_data.current_password, admin_user["password"]):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+    
+    # Update password
+    new_password_hash = get_password_hash(password_data.new_password)
+    await db.users.update_one(
+        {"id": current_admin.id},
+        {"$set": {"password": new_password_hash}}
+    )
+    
+    return {"message": "Password changed successfully"}
+
+# Settings Routes (unchanged)
 @api_router.get("/settings", response_model=UserSettings)
 async def get_user_settings(current_user: User = Depends(get_current_user)):
     settings = await db.user_settings.find_one({"user_id": current_user.id})
@@ -297,7 +392,7 @@ async def test_api_connections(current_user: User = Depends(get_current_user)):
     
     return results
 
-# Shopify Routes
+# Shopify Routes (unchanged)
 @api_router.get("/shopify/orders", response_model=List[ShopifyOrder])
 async def get_shopify_orders(current_user: User = Depends(get_current_user)):
     settings = await db.user_settings.find_one({"user_id": current_user.id})
@@ -347,7 +442,7 @@ async def get_shopify_orders(current_user: User = Depends(get_current_user)):
     except httpx.RequestError:
         raise HTTPException(status_code=500, detail="Error connecting to Shopify")
 
-# ZRExpress Routes
+# ZRExpress Routes (unchanged)
 @api_router.post("/zrexpress/send")
 async def send_to_zrexpress(
     orders: List[EditableOrder], 
