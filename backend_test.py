@@ -597,8 +597,8 @@ class A7DeliveryAPITester:
 
 def main():
     """Main test execution"""
-    # Get backend URL from environment
-    backend_url = "https://0bf187f9-b786-4b7c-8dc1-8e0259590cdf.preview.emergentagent.com"
+    # Use localhost for testing since external URL has routing issues
+    backend_url = "http://localhost:8001"
     
     print(f"A7delivery Orders Backend API Tester")
     print(f"Backend URL: {backend_url}")
