@@ -136,7 +136,7 @@ class A7DeliveryAPITester:
         for method, endpoint in protected_endpoints:
             try:
                 response = self.make_request(method, endpoint)
-                if response.status_code == 401:
+                if response.status_code in [401, 403]:  # Both 401 and 403 indicate protection
                     self.log_test(f"Unauthorized Access Protection - {method} {endpoint}", True, "Endpoint properly protected")
                 else:
                     self.log_test(f"Unauthorized Access Protection - {method} {endpoint}", False, f"Endpoint not protected: {response.status_code}")
