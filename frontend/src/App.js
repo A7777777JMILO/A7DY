@@ -865,6 +865,12 @@ const AppContent = () => {
     );
   }
 
+  // Set RTL on document for Arabic support
+  React.useEffect(() => {
+    document.documentElement.setAttribute('dir', 'rtl');
+    document.documentElement.setAttribute('lang', 'ar');
+  }, []);
+
   return user ? <Dashboard /> : <LoginPage />;
 };
 
